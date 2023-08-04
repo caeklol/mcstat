@@ -1,0 +1,414 @@
+//! Implementation of the Java Minecraft ping protocol.
+//! https://wiki.vg/Server_List_Ping
+
+use crate::{Error, Pingable};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use serde::Deserialize;
+use std::{
+    io::{self, Cursor, Read, Write},
+    net::{TcpStream, ToSocketAddrs},
+    time::{Duration, Instant}
+};
+use thiserror::Error;
+
+/// Configuration for pinging a Java server.
+///
+/// # Examples
+///
+/// ```
+/// use mcping::Java;
+/// use std::time::Duration;
+///
+/// let bedrock_config = Java {
+///     server_address: "mc.hypixel.net".to_string(),
+///     timeout: Some(Duration::from_secs(10)),
+/// };
+/// ```
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct Java {
+    /// The java server address.
+    ///
+    /// This can be either an IP or a hostname, and both may optionally have a
+    /// port at the end.
+    ///
+    /// DNS resolution will be performed on hostnames.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// test.server.com
+    /// test.server.com:19384
+    /// 13.212.76.209
+    /// 13.212.76.209:23193
+    /// ```
+    pub server_address: String,
+    /// The connection timeout if a connection cannot be made.
+    pub timeout: Option<Duration>,
+}
+
+impl Pingable for Java {
+    type Response = JavaResponse;
+
+    fn ping(self) -> Result<(u64, Self::Response), crate::Error> {
+        let mut conn = Connection::new(&self.server_address, self.timeout)?;
+        
+        // Handshake
+        conn.send_packet(Packet::Handshake {
+            version: 47,
+            host: conn.host.clone(),
+            port: conn.port,
+            next_state: 1,
+        })?;
+
+        // Request
+        conn.send_packet(Packet::Request {})?;
+
+        let resp = match conn.read_packet()? {
+            Packet::Response { response } => serde_json::from_str(&response)?,
+            _ => return Err(Error::InvalidPacket),
+        };
+
+        // Ping Request
+        // TODO: Make this optional
+        let r = rand::random();
+        conn.send_packet(Packet::Ping { payload: r })?;
+
+        let before = Instant::now();
+        let ping = match conn.read_packet()? {
+            Packet::Pong { payload } if payload == r => {
+                (Instant::now() - before).as_millis() as u64
+            }
+            _ => return Err(Error::InvalidPacket),
+        };
+
+        Ok((ping, resp))
+    }
+}
+
+/// The server status reponse
+///
+/// More information can be found [here](https://wiki.vg/Server_List_Ping).
+#[derive(Deserialize)]
+pub struct JavaResponse {
+    /// The version of the server.
+    pub version: Version,
+    /// Information about online players
+    pub players: Players,
+    /// The description of the server (MOTD).
+    pub description: Chat,
+    /// The server icon (a Base64-encoded PNG image)
+    pub favicon: Option<String>,
+}
+
+/// Information about the server's version
+#[derive(Deserialize)]
+pub struct Version {
+    /// The name of the version the server is running
+    ///
+    /// In practice this comes in a large variety of different formats.
+    pub name: String,
+    /// See https://wiki.vg/Protocol_version_numbers
+    pub protocol: i64,
+}
+
+/// An online player of the server.
+#[derive(Deserialize)]
+pub struct Player {
+    /// The name of the player.
+    pub name: String,
+    /// The player's UUID
+    pub id: String,
+}
+
+/// The stats for players on the server.
+#[derive(Deserialize)]
+pub struct Players {
+    /// The max amount of players.
+    pub max: i64,
+    /// The amount of players online.
+    pub online: i64,
+    /// A preview of which players are online
+    ///
+    /// In practice servers often don't send this or use it for more advertising
+    pub sample: Option<Vec<Player>>,
+}
+
+#[derive(Deserialize)]
+pub enum Color {
+    #[serde(rename = "black")]
+    Black,
+    #[serde(rename = "dark_blue")]
+    DarkBlue,
+    #[serde(rename = "dark_green")]
+    DarkGreen,
+    #[serde(rename = "dark_aqua")]
+    DarkAqua,
+    #[serde(rename = "dark_red")]
+    DarkRed,
+    #[serde(rename = "dark_purple")]
+    DarkPurple,
+    #[serde(rename = "gold")]
+    Gold,
+    #[serde(rename = "gray")]
+    Gray,
+    #[serde(rename = "dark_gray")]
+    DarkGray,
+    #[serde(rename = "blue")]
+    Blue,
+    #[serde(rename = "green")]
+    Green,
+    #[serde(rename = "aqua")]
+    Aqua,
+    #[serde(rename = "red")]
+    Red,
+    #[serde(rename = "light_purple")]
+    LightPurple,
+    #[serde(rename = "yellow")]
+    Yellow,
+    #[serde(rename = "white")]
+    White,
+}
+
+#[derive(Deserialize)]
+pub struct Component {
+    text: String,
+    color: Option<Color>,
+    #[serde(default)]
+    bold: bool,
+    #[serde(default)]
+    italic: bool,
+    #[serde(default)]
+    underline: bool,
+    #[serde(default)]
+    strikethrough: bool,
+    #[serde(default)]
+    obfuscated: bool,
+    extra: Option<Vec<Component>>
+}
+
+impl Component {
+
+    fn get_color_letter(color_code: &Color) -> String {
+        match color_code {
+            Color::Black => String::from("0"),
+            Color::DarkBlue => String::from("1"),
+            Color::DarkGreen => String::from("2"),
+            Color::DarkAqua => String::from("3"),
+            Color::DarkRed => String::from("4"),
+            Color::DarkPurple => String::from("5"),
+            Color::Gold => String::from("6"),
+            Color::Gray => String::from("7"),
+            Color::DarkGray => String::from("8"),
+            Color::Blue => String::from("9"),
+            Color::Green => String::from("a"),
+            Color::Aqua => String::from("b"),
+            Color::Red => String::from("c"),
+            Color::LightPurple => String::from("d"),
+            Color::Yellow => String::from("e"),
+            Color::White => String::from("f")
+        }
+    }
+
+    fn text(&self) -> String {
+        let mut result = String::new();
+        match &self.color {
+            Some(color) => {
+                let letter = Self::get_color_letter(color);
+                result.push_str(&format!("§{}", letter));
+            }
+            _ => {}
+        }
+
+        if self.bold { result.push_str("§l"); }
+        if self.italic { result.push_str("§o"); }
+        if self.underline { result.push_str("§n"); }
+        if self.strikethrough { result.push_str("§m"); }
+        if self.obfuscated { result.push_str("§k"); }
+
+        result.push_str(&self.text);
+
+        match &self.extra {
+            Some(extra) => {
+                for component in extra {
+                    result += &component.text();
+                }
+            }
+            _ => {}
+        }
+
+        result
+    }
+}
+
+/// This is a partial implemenation of a Minecraft chat component limited to just text (and components)
+// TODO: Finish this object.
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Chat {
+    Text(Component),
+    String(String),
+}
+
+impl Chat {
+
+    pub fn text(&self) -> String {
+        match self {
+            Chat::Text(ct) => ct.text(),
+            Chat::String(s) => s.to_string(),
+        }
+    }
+}
+
+trait ReadJavaExt: Read + ReadBytesExt {
+    fn read_varint(&mut self) -> io::Result<i32> {
+        let mut res = 0i32;
+        for i in 0..5 {
+            let part = self.read_u8()?;
+            res |= (part as i32 & 0x7F) << (7 * i);
+            if part & 0x80 == 0 {
+                return Ok(res);
+            }
+        }
+        Err(io::Error::new(io::ErrorKind::Other, "VarInt too big!"))
+    }
+
+    fn read_string(&mut self) -> io::Result<String> {
+        let len = self.read_varint()? as usize;
+        let mut buf = vec![0; len as usize];
+        self.read_exact(&mut buf)?;
+        Ok(String::from_utf8(buf).expect("Invalid UTF-8 String."))
+    }
+}
+
+impl<T> ReadJavaExt for T where T: Read + ReadBytesExt {}
+
+trait WriteJavaExt: Write + WriteBytesExt {
+    fn write_varint(&mut self, mut val: i32) -> io::Result<()> {
+        for _ in 0..5 {
+            if val & !0x7F == 0 {
+                self.write_u8(val as u8)?;
+                return Ok(());
+            }
+            self.write_u8((val & 0x7F | 0x80) as u8)?;
+            val >>= 7;
+        }
+        Err(io::Error::new(io::ErrorKind::Other, "VarInt too big!"))
+    }
+
+    fn write_string(&mut self, s: &str) -> io::Result<()> {
+        self.write_varint(s.len() as i32)?;
+        self.write_all(s.as_bytes())?;
+        Ok(())
+    }
+}
+
+impl<T> WriteJavaExt for T where T: Write + WriteBytesExt {}
+
+#[derive(Debug, Error)]
+#[error("invalid packet response `{packet:?}`")]
+pub struct InvalidPacket {
+    packet: Packet,
+}
+
+#[derive(Debug)]
+pub(crate) enum Packet {
+    Handshake {
+        version: i32,
+        host: String,
+        port: u16,
+        next_state: i32,
+    },
+    Response {
+        response: String,
+    },
+    Pong {
+        payload: u64,
+    },
+    Request {},
+    Ping {
+        payload: u64,
+    },
+}
+
+struct Connection {
+    stream: TcpStream,
+    host: String,
+    port: u16,
+}
+
+impl Connection {
+    fn new(address: &str, timeout: Option<Duration>) -> Result<Self, Error> {
+        // Split the address up into it's parts, saving the host and port for later and converting the
+        // potential domain into an ip
+        let mut parts = address.split(':');
+
+        let host = parts.next().ok_or(Error::InvalidAddress)?.to_string();
+
+        // If a port exists we want to try and parse it and if not we will
+        // default to 25565 (Minecraft)
+        let port = if let Some(port) = parts.next() {
+            port.parse::<u16>().map_err(|_| Error::InvalidAddress)?
+        } else {
+            25565
+        };
+
+        let addr = address.to_socket_addrs().expect("Invalid host").next().expect("Couldn't resolve host");
+
+        Ok(Self {
+            stream: if let Some(timeout) = timeout {
+                TcpStream::connect_timeout(&addr, timeout)?
+            } else {
+                TcpStream::connect(&addr)?
+            },
+            host,
+            port,
+        })
+    }
+
+    fn send_packet(&mut self, p: Packet) -> Result<(), Error> {
+        let mut buf = Vec::new();
+        match p {
+            Packet::Handshake {
+                version,
+                host,
+                port,
+                next_state,
+            } => {
+                buf.write_varint(0x00)?;
+                buf.write_varint(version)?;
+                buf.write_string(&host)?;
+                buf.write_u16::<BigEndian>(port)?;
+                buf.write_varint(next_state)?;
+            }
+            Packet::Request {} => {
+                buf.write_varint(0x00)?;
+            }
+            Packet::Ping { payload } => {
+                buf.write_varint(0x01)?;
+                buf.write_u64::<BigEndian>(payload)?;
+            }
+            _ => return Err(Error::InvalidPacket),
+        }
+        self.stream.write_varint(buf.len() as i32)?;
+        self.stream.write_all(&buf)?;
+        Ok(())
+    }
+
+    fn read_packet(&mut self) -> Result<Packet, Error> {
+        let len = self.stream.read_varint()?;
+        let mut buf = vec![0; len as usize];
+        self.stream.read_exact(&mut buf)?;
+        let mut c = Cursor::new(buf);
+
+        Ok(match c.read_varint()? {
+            0x00 => Packet::Response {
+                response: c.read_string()?,
+            },
+            0x01 => Packet::Pong {
+                payload: c.read_u64::<BigEndian>()?,
+            },
+            _ => return Err(Error::InvalidPacket),
+        })
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "mcstat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.21.2"
+clap = { version = "4.3.11", features = ["derive"] }
+colored = "2.0.4"
+image = "0.24.6"
+mcping = "0.2.0"
+termimage = "1.2.1"
+uuid = "1.4.1"
+
+[patch.crates-io]
+mcping = { path = ".\\patch\\mcping" }
