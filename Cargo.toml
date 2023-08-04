@@ -13,4 +13,4 @@ termimage = "1.2.1"
 uuid = "1.4.1"
 
 [patch.crates-io]
-mcping = { path = ".\\patch\\mcping" }
+mcping = { path = "./patch/mcping" }

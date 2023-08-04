@@ -10,13 +10,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-linux:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Rust
+      uses: actions/setup-rust@v1
+      with:
+        rust-version: stable
+    - name: Build/test for Ubuntu
+      run: |
+        cargo build --verbose
+        cargo test --verbose
+
+  build-windows:
 
     runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Set up Rust
+      uses: actions/setup-rust@v1
+      with:
+        rust-version: stable-x86_64-pc-windows-msvc
+    - name: Build/test for Windows
+      run: |
+        cargo build --verbose
+        cargo test --verbose
