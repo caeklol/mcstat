@@ -23,6 +23,9 @@ struct Args {
     #[arg(long)]
     favicon: bool,
 
+    #[arg(long)]
+    player_sample: bool,
+
     #[arg(long, requires_if("true", "favicon"), default_value_t = 32)]
     size: u32
 }
@@ -75,6 +78,21 @@ fn main() {
                     ops::write_ansi_truecolor(&mut stdout(), &resized);
                 }
                 println!("\n");
+            }
+
+            if args.player_sample {
+                let sample_txt = color(String::from("Player Sample"), Palette::OVERLAY1);
+                if response.players.sample.is_none() {
+                    let no_sample_str = color(String::from("This server did not send a sample."), Palette::TEXT);
+                    println!("{}\n{}", sample_txt, no_sample_str);
+                } else {
+                    let player_sample = response.players.sample.unwrap();
+                    // Wow, that's long.
+                    let player_sample_names = player_sample.iter().map(|player| &player.name).collect::<Vec<&String>>().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+                    let sample_val = color(player_sample_names.join(", "), Palette::TEXT);
+                    println!("{}\n{}", sample_txt, sample_val);
+                }
             }
         }
 
