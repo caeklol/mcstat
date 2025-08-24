@@ -57,10 +57,14 @@ jobs:
         name: Download Windows binary
         with:
           name: windows-binary
+      - name: List downloaded
+        run: ls -R
       - name: Create GitHub release
         id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          files: target/release/*
+          files: |
+            ./mcstat/mcstat
+            ./mcstat/mcstat.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
