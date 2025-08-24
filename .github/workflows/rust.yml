@@ -22,8 +22,8 @@ jobs:
       run: |
         cargo build --release --verbose
         cargo test --verbose
-    - uses: actions/upload-artifact@v3
     - name: Upload Linux binary
+      uses: actions/upload-artifact@v3
       with:
         name: linux-binary
         path: target/release/mcstat
@@ -37,8 +37,8 @@ jobs:
       run: |
         cargo build --release --verbose
         cargo test --verbose
-    - uses: actions/upload-artifact@v3
     - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v3
       with:
         name: windows-binary
         path: target/release/mcstat.exe
