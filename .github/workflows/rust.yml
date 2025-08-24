@@ -22,6 +22,11 @@ jobs:
       run: |
         cargo build --release --verbose
         cargo test --verbose
+    - name: Upload Linux binary
+    - uses: actions/upload-artifact@v3
+      with:
+        name: linux-binary
+        path: target/release/mcstat
 
   build-windows:
     runs-on: windows-latest
@@ -32,12 +37,26 @@ jobs:
       run: |
         cargo build --release --verbose
         cargo test --verbose
+    - name: Upload Windows artifacts
+    - uses: actions/upload-artifact@v3
+      with:
+        name: windows-binary
+        path: target/release/mcstat.exe
 
   create-release:
     needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags')
     steps:
+      - uses: actions/checkout@v3
+      - name: Download Linux binary
+        uses: actions/download-artifact@v3
+        with:
+          name: linux-binary
+      - name: Download Windows binary
+        uses: actions/download-artifact@v3
+        with:
+          name: windows-binary
       - uses: actions/checkout@v3
       - name: Create GitHub release
         id: create_release
