@@ -64,7 +64,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            ./mcstat/mcstat
-            ./mcstat/mcstat.exe
+            ./mcstat
+            ./mcstat.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
